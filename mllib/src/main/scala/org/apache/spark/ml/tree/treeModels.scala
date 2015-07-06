@@ -17,6 +17,8 @@
 
 package org.apache.spark.ml.tree
 
+import scala.collection.mutable
+import org.apache.spark.ml.tree.LeafNode
 
 /**
  * Abstraction for Decision Tree models.
@@ -51,6 +53,10 @@ private[ml] trait DecisionTreeModel {
   def toDebugString: String = {
     val header = toString + "\n"
     header + rootNode.subtreeToString(2)
+  }
+
+  lazy val variableImportance: Map[Int, Double] = {
+    VariableImportance.computeVariableImportance(rootNode)
   }
 }
 
@@ -89,4 +95,48 @@ private[ml] trait TreeEnsembleModel {
 
   /** Total number of nodes, summed over all trees in the ensemble. */
   lazy val totalNumNodes: Int = trees.map(_.numNodes).sum
+
+  lazy val variableImportance: Map[Int, Double] = {
+    VariableImportance.computeVariableImportance(trees.toSeq.map(_.rootNode):_*)
+  }
+}
+
+
+private[ml] object VariableImportance {
+  /**
+   * Computes variable importance by summing up impurity gains for each feature and normalizing them
+   * over partition size and trees.
+   * @param rootNodes Root nodes for each tree in the ensemble.
+   * @return A mapping from feature index to importance value. If a feature index is not present its
+   *         importance is zero.
+   */
+  def computeVariableImportance(rootNodes: Node*): Map[Int, Double] = {
+
+    def recVarImp(node: Node, varImp: mutable.HashMap[Int, Double]): mutable.HashMap[Int, Double] = {
+      node match {
+        case terminal:LeafNode => varImp  // stop criterion
+        case nonTerminal:InternalNode => {
+          varImp(nonTerminal.split.featureIndex) += nonTerminal.gain
+          varImp
+        }
+      }
+    }
+
+    def varImp(root: Node): mutable.HashMap[Int, Double] = {
+      val m = new mutable.HashMap[Int, Double]()
+      recVarImp(root, m)
+    }
+
+    def mergeMap(a: Map[Int, Double], b: Map[Int, Double]): Map[Int, Double] = {
+      val o = (a.keySet ++ b.keySet).map(key => (key, a.getOrElse(key, 0.0) + b.getOrElse(key, 0.0)))
+      o.toMap
+    }
+    val importance: Map[Int, Double] = rootNodes.asParIterable.map(varImp).reduce(mergeMap)
+    if (rootNodes.length == 1)
+      importance
+    else {
+      // divide by number of trees for ensembles
+      importance.map(tpl => (tpl._1, tpl._2 / rootNodes.length)).toMap
+    }
+  }
 }
