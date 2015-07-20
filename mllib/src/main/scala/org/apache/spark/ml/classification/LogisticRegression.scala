@@ -139,24 +139,34 @@ class LogisticRegression(override val uid: String)
       throw new SparkException(msg)
     }
 
-    val featuresMean = summarizer.mean.toArray
-    val featuresStd = summarizer.variance.toArray.map(math.sqrt)
+    var featuresMean = summarizer.mean.toArray
+
+    logInfo(s"PETER featuresMean: ${featuresMean.min} ${featuresMean.max}")
+
+    var featuresStd = summarizer.variance.toArray.map(math.sqrt)
+
+    logInfo(s"PETER featuresStd: ${featuresStd.min} ${featuresStd.max}")
+
+    featuresMean = Array.fill(numFeatures)(0.0)
+    featuresStd = Array.fill(numFeatures)(1.0)
 
     val regParamL1 = $(elasticNetParam) * $(regParam)
     val regParamL2 = (1.0 - $(elasticNetParam)) * $(regParam)
 
     val costFun = new LogisticCostFun(instances, numClasses, $(fitIntercept),
       featuresStd, featuresMean, regParamL2)
-
+    val memoryUsage = 10
     val optimizer = if ($(elasticNetParam) == 0.0 || $(regParam) == 0.0) {
-      new BreezeLBFGS[BDV[Double]]($(maxIter), 10, $(tol))
+      new BreezeLBFGS[BDV[Double]]($(maxIter), memoryUsage, $(tol))
     } else {
       // Remove the L1 penalization on the intercept
       def regParamL1Fun = (index: Int) => {
         if (index == numFeatures) 0.0 else regParamL1
       }
-      new BreezeOWLQN[Int, BDV[Double]]($(maxIter), 10, regParamL1Fun, $(tol))
+      new BreezeOWLQN[Int, BDV[Double]]($(maxIter), memoryUsage, regParamL1Fun, $(tol))
     }
+
+    logInfo(s"PETER optimizer:${optimizer}")
 
     val initialWeightsWithIntercept =
       Vectors.zeros(if ($(fitIntercept)) numFeatures + 1 else numFeatures)
@@ -184,12 +194,16 @@ class LogisticRegression(override val uid: String)
 
     var state = states.next()
     val lossHistory = mutable.ArrayBuilder.make[Double]
-
+    var j = 1
     while (states.hasNext) {
+      j = j + 1
       lossHistory += state.value
+      logInfo(s"PETER Iter:$j  loss: ${state.value}  adjValue:${state.adjustedValue}  searchFailed:${state.searchFailed}")
       state = states.next()
     }
     lossHistory += state.value
+    val msg2 = lossHistory.result.mkString(",")
+    logInfo(s"PETER lossHistory:$msg2")
 
     // The weights are trained in the scaled space; we're converting them back to
     // the original space.
@@ -514,7 +528,7 @@ private class LogisticCostFun(
     fitIntercept: Boolean,
     featuresStd: Array[Double],
     featuresMean: Array[Double],
-    regParamL2: Double) extends DiffFunction[BDV[Double]] {
+    regParamL2: Double) extends DiffFunction[BDV[Double]] with Logging{
 
   override def calculate(weights: BDV[Double]): (Double, BDV[Double]) = {
     val w = Vectors.fromBreeze(weights)
@@ -548,7 +562,7 @@ private class LogisticCostFun(
     } else {
       axpy(regParamL2, w, gradient)
     }
-
+    logInfo(s"PETER norm:$norm    loss:$loss    gradient:$gradient")
     (loss, gradient.toBreeze.asInstanceOf[BDV[Double]])
   }
 }
