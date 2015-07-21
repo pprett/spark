@@ -147,8 +147,8 @@ class LogisticRegression(override val uid: String)
 
     logInfo(s"PETER featuresStd: ${featuresStd.min} ${featuresStd.max}")
 
-    featuresMean = Array.fill(numFeatures)(0.0)
-    featuresStd = Array.fill(numFeatures)(1.0)
+    //featuresMean = Array.fill(numFeatures)(0.0)
+    //featuresStd = Array.fill(numFeatures)(1.0)
 
     val regParamL1 = $(elasticNetParam) * $(regParam)
     val regParamL2 = (1.0 - $(elasticNetParam)) * $(regParam)
@@ -185,6 +185,7 @@ class LogisticRegression(override val uid: String)
        * b = \log{P(1) / P(0)} = \log{count_1 / count_0}
        * }}}
        */
+      // FIXME dont do this to match sklearn results
       initialWeightsWithIntercept.toArray(numFeatures)
         = math.log(histogram(1).toDouble / histogram(0).toDouble)
     }
@@ -195,10 +196,13 @@ class LogisticRegression(override val uid: String)
     var state = states.next()
     val lossHistory = mutable.ArrayBuilder.make[Double]
     var j = 1
+    var lastLoss = -1.0
     while (states.hasNext) {
       j = j + 1
       lossHistory += state.value
-      logInfo(s"PETER Iter:$j  loss: ${state.value}  adjValue:${state.adjustedValue}  searchFailed:${state.searchFailed}")
+      val diff = state.value - lastLoss
+      lastLoss = state.value
+      logInfo(s"PETER Iter:$j  loss::${state.value}  diff:${diff}")
       state = states.next()
     }
     lossHistory += state.value
@@ -558,11 +562,17 @@ private class LogisticCostFun(
     if (fitIntercept) {
       val wArray = w.toArray.clone()
       wArray(wArray.length - 1) = 0.0
+      // gradient = regParamL2 * w + gradient # excluding the intercept
       axpy(regParamL2, Vectors.dense(wArray), gradient)
     } else {
       axpy(regParamL2, w, gradient)
     }
-    logInfo(s"PETER norm:$norm    loss:$loss    gradient:$gradient")
+    val gradientNorm = brzNorm(Vectors.dense(gradient.toArray).toBreeze, 2.0)
+    val maxGradient = gradient.toArray.max
+    val minGradient = gradient.toArray.min
+    val interceptGradient = if (fitIntercept) {gradient(gradient.size - 1)} else {0.0}
+    logInfo(s"PETER norm:$norm    loss:$loss  |gradient|: $gradientNorm  interceptGradient: $interceptGradient    gradient:$gradient")
+    println(s"PETER2 |gradient|: $gradientNorm  interceptGradient: $interceptGradient  minGradient:$minGradient   maxGradient:$maxGradient")
     (loss, gradient.toBreeze.asInstanceOf[BDV[Double]])
   }
 }
